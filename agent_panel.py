@@ -17,6 +17,7 @@ DEFAULT_STATE = {
     "agent_df": None,
     "agent_chart_specs": [],
     "agent_pending_message": None,
+    "agent_approval_gen": 0,
 }
 
 def get_state(key):
@@ -92,6 +93,7 @@ def run_step(client):
             return
 
         set_state("agent_pending_message", msg)
+        set_state("agent_approval_gen", get_state("agent_approval_gen") + 1)
         set_state("agent_phase", "awaiting_approval")
 
 def execute_pending_tools(edited_args=None):
@@ -183,17 +185,18 @@ def render_events():
 def render_pending_approval():
     st.warning("The agent wants to perform the following action:")
     edited_args = {}
+    gen = get_state("agent_approval_gen")
     for i, tc in enumerate(get_state("agent_pending_message").tool_calls):
         args = json.loads(tc.function.arguments)
         st.markdown(f"**Tool:** `{tc.function.name}`")
         if tc.function.name == "QueryMovieDB":
             edited = st.text_area(
-                "Code", value=args["code"], height=150, key=f"edit_code_{i}",
+                "Code", value=args["code"], height=150, key=f"edit_code_{gen}_{i}",
             )
             edited_args[i] = edited
         elif tc.function.name == "CreateChart":
             edited = st.text_area(
-                "Vega-Lite Spec", value=args["vega_lite_spec"], height=200, key=f"edit_spec_{i}",
+                "Vega-Lite Spec", value=args["vega_lite_spec"], height=200, key=f"edit_spec_{gen}_{i}",
             )
             edited_args[i] = edited
 
@@ -202,15 +205,15 @@ def render_pending_approval():
         approved = st.button("Approve", type="primary", use_container_width=True)
     with btn_col2:
         rejected = st.button("Reject", use_container_width=True)
+    return approved, rejected, edited_args
 
-    redirect = st.text_input(
-        "Tell the agent what to do differently...",
-        key="redirect_feedback",
-        placeholder="Tell the agent what to do differently...",
+def render_pending_feedback():
+    feedback = st.text_input(
+        "Why are you rejecting? Tell the agent what to do instead:",
+        key="reject_feedback",
     )
-    redirected = st.button("Redirect", use_container_width=True)
-
-    return approved, rejected, redirected, redirect, edited_args
+    submitted = st.button("Submit Rejection", use_container_width=True)
+    return submitted, feedback
 
 def render_panel():
     st.subheader("Analysis Results")
@@ -230,8 +233,8 @@ def render_panel():
         elif phase == "awaiting_approval":
             with st.expander("Agent Reasoning Trace", expanded=True):
                 render_events()
-            approved, rejected = render_pending_approval()
-            actions = {"approved": approved, "rejected": rejected}
+            approved, rejected, edited_args = render_pending_approval()
+            actions = {"approved": approved, "rejected": rejected, "edited_args": edited_args}
 
         elif phase == "awaiting_feedback":
             with st.expander("Agent Reasoning Trace", expanded=True):
@@ -268,7 +271,7 @@ def agent_panel(client, analyze_button, user_question, filtered_df, show_chart=F
         st.rerun()
     elif phase == "awaiting_approval":
         if actions.get("approved"):
-            execute_pending_tools()
+            execute_pending_tools(actions.get("edited_args"))
             st.rerun()
         elif actions.get("rejected"):
             set_state("agent_phase", "awaiting_feedback")

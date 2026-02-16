@@ -3,7 +3,7 @@ import tiktoken
 
 MODEL = "gpt-4o-mini"
 MAX_CONTEXT_TOKENS = 128_000
-COMPACTION_THRESHOLD = 300
+COMPACTION_THRESHOLD = 100_000
 KEEP_RECENT = 2  # messages to preserve at the end
 
 
