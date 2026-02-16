@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from movie_tool import get_tools, query_movie_db
 from chart_tool import get_chart_tool, validate_chart
+from context_compaction import compact_if_needed
 
 
 # ── State ──
@@ -51,6 +52,14 @@ def run_step(client):
     phase = get_state("agent_phase")
     messages = get_state("agent_messages")
 
+    tools = get_state("agent_tools")
+    compacted, _, _ = compact_if_needed(client, messages, tools)
+    if compacted:
+        get_state("agent_events").append({
+            "type": "compaction",
+            "message": "Context was compacted to stay within model limits.",
+        })
+
     if phase == "thinking":
         class Reasoning(BaseModel):
             reason: str = Field(description="Your reasoning about what you know so far and what to do next")
@@ -85,14 +94,21 @@ def run_step(client):
         set_state("agent_pending_message", msg)
         set_state("agent_phase", "awaiting_approval")
 
-def execute_pending_tools():
+def execute_pending_tools(edited_args=None):
     messages = get_state("agent_messages")
     df = get_state("agent_df")
     pending_msg = get_state("agent_pending_message")
 
     messages.append(pending_msg)
-    for tc in pending_msg.tool_calls:
+    for i, tc in enumerate(pending_msg.tool_calls):
         args = json.loads(tc.function.arguments)
+
+        # Use edited code/spec if the user modified it
+        if edited_args and i in edited_args:
+            if tc.function.name == "QueryMovieDB":
+                args["code"] = edited_args[i]
+            elif tc.function.name == "CreateChart":
+                args["vega_lite_spec"] = edited_args[i]
 
         if tc.function.name == "QueryMovieDB":
             result = query_movie_db(args["code"], df)
@@ -159,33 +175,42 @@ def render_events():
             if event.get("feedback"):
                 st.text(f"Feedback: {event['feedback']}")
             st.divider()
+        elif event["type"] == "compaction":
+            st.info(event["message"])
         elif event["type"] == "answer":
             st.markdown(f"**Thought:** {event['thought']}")
 
 def render_pending_approval():
     st.warning("The agent wants to perform the following action:")
-    for tc in get_state("agent_pending_message").tool_calls:
+    edited_args = {}
+    for i, tc in enumerate(get_state("agent_pending_message").tool_calls):
         args = json.loads(tc.function.arguments)
         st.markdown(f"**Tool:** `{tc.function.name}`")
         if tc.function.name == "QueryMovieDB":
-            st.code(args["code"], language="python")
+            edited = st.text_area(
+                "Code", value=args["code"], height=150, key=f"edit_code_{i}",
+            )
+            edited_args[i] = edited
         elif tc.function.name == "CreateChart":
-            st.code(args["vega_lite_spec"], language="json")
+            edited = st.text_area(
+                "Vega-Lite Spec", value=args["vega_lite_spec"], height=200, key=f"edit_spec_{i}",
+            )
+            edited_args[i] = edited
 
     btn_col1, btn_col2 = st.columns(2)
     with btn_col1:
         approved = st.button("Approve", type="primary", use_container_width=True)
     with btn_col2:
         rejected = st.button("Reject", use_container_width=True)
-    return approved, rejected
 
-def render_pending_feedback():
-    feedback = st.text_input(
-        "Why are you rejecting? Tell the agent what to do instead:",
-        key="reject_feedback",
+    redirect = st.text_input(
+        "Tell the agent what to do differently...",
+        key="redirect_feedback",
+        placeholder="Tell the agent what to do differently...",
     )
-    submitted = st.button("Submit Rejection", use_container_width=True)
-    return submitted, feedback
+    redirected = st.button("Redirect", use_container_width=True)
+
+    return approved, rejected, redirected, redirect, edited_args
 
 def render_panel():
     st.subheader("Analysis Results")
