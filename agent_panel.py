@@ -184,20 +184,25 @@ def render_events():
 
 def render_pending_approval():
     st.warning("The agent wants to perform the following action:")
-    edited_args = {}
+    pending_msg = get_state("agent_pending_message")
     gen = get_state("agent_approval_gen")
-    for i, tc in enumerate(get_state("agent_pending_message").tool_calls):
+
+    # Extract args for each tool call into a simple list of dicts
+    tool_data = []
+    for tc in pending_msg.tool_calls:
         args = json.loads(tc.function.arguments)
-        st.markdown(f"**Tool:** `{tc.function.name}`")
-        if tc.function.name == "QueryMovieDB":
-            edited = st.text_area(
-                "Code", value=args["code"], height=150, key=f"edit_code_{gen}_{i}",
-            )
+        tool_data.append({"name": tc.function.name, "args": args, "id": tc.id})
+
+    edited_args = {}
+    for i, td in enumerate(tool_data):
+        st.markdown(f"**Tool:** `{td['name']}`")
+        if td["name"] == "QueryMovieDB":
+            code = td["args"]["code"]
+            edited = st.text_area("Edit code before running:", value=code, height=300, key=f"edit_{gen}_{i}")
             edited_args[i] = edited
-        elif tc.function.name == "CreateChart":
-            edited = st.text_area(
-                "Vega-Lite Spec", value=args["vega_lite_spec"], height=200, key=f"edit_spec_{gen}_{i}",
-            )
+        elif td["name"] == "CreateChart":
+            spec = td["args"]["vega_lite_spec"]
+            edited = st.text_area("Edit spec before running:", value=spec, height=300, key=f"edit_{gen}_{i}")
             edited_args[i] = edited
 
     btn_col1, btn_col2 = st.columns(2)
